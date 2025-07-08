@@ -16,20 +16,19 @@ app.use(cors());
 app.use(express.json());
 app.use(cookieParser());
 app.get("/favicon.ico", (req: any, res: any) => res.status(204).end());
+app.get("/", (req: any, res: any) => res.status(200).send("ZapLink API Root"));
 
-// Use Routes
-app.get("/health", (req: any, res: any) => res.sendStatus(200));
-
-// Rate limiter for /api, skip favicon and root
+// Rate limiter for all routes except favicon and root
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: process.env.NODE_ENV === "development" ? 1000 : 100, // higher in dev
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.path === "/favicon.ico" || req.path === "/",
 });
+app.use(apiLimiter);
 
-app.use("/api", apiLimiter);
+// Use Routes
 app.use("/api", routes);
 
 // Start the server
