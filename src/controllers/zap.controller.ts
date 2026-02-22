@@ -216,10 +216,10 @@ export const createZap = async (req: Request, res: any) => {
       if (file) {
         try {
           const fileName = (file as any).originalname;
-          const ext = fileName.substring(fileName.lastIndexOf('.'));
+          const ext = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
           let resource_type = "raw";
           
-          if (type === "image" || type === "pdf") {
+          if (type === "image") {
             resource_type = "image";
           } else if (type === "video") {
             resource_type = "video";
