@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import routes from "./Routes/index";
 import cookieParser from "cookie-parser";
 import { globalLimiter } from "./middlewares/rateLimiter";
+import multer from "multer";
 
 dotenv.config();
 
@@ -29,6 +30,26 @@ app.use(globalLimiter);
 
 // ── API Routes ────────────────────────────────────────────────────────────────
 app.use("/api", routes);
+
+// ── Global Error Handler ─────────────────────────────────────────────────────
+// Catches Multer file-size errors and returns a clear 400 JSON response
+app.use((err: any, _req: any, res: any, next: any) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(400).json({
+        success: false,
+        message: "File too large. Maximum allowed size is 50 MB.",
+        error: err.code,
+      });
+    }
+    return res.status(400).json({
+      success: false,
+      message: err.message,
+      error: err.code,
+    });
+  }
+  next(err);
+});
 
 // ── Start Server ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
