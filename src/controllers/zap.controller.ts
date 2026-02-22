@@ -4,6 +4,10 @@ import { customAlphabet } from "nanoid";
 import QRCode from "qrcode";
 import prisma from "../utils/prismClient";
 import cloudinary from "../middlewares/cloudinary";
+import {
+  clearZapPasswordAttemptCounter,
+  registerInvalidZapPasswordAttempt,
+} from "../middlewares/rateLimiter";
 import { ApiError } from "../utils/ApiError";
 import { ApiResponse } from "../utils/ApiResponse";
 import dotenv from "dotenv";
@@ -317,7 +321,26 @@ export const getZapByShortId = async (req: Request, res: Response) => {
       );
 
       if (!isPasswordValid) {
-        res.locals.invalidZapPassword = true;
+        const attempt = registerInvalidZapPasswordAttempt(req, shortId);
+
+        if (attempt.isBlocked) {
+          res.set("Retry-After", String(attempt.retryAfterSeconds));
+          if (req.headers.accept && req.headers.accept.includes("text/html")) {
+            return res.redirect(
+              `${FRONTEND_URL}/zaps/${shortId}?error=too_many_attempts`
+            );
+          }
+          res
+            .status(429)
+            .json(
+              new ApiError(
+                429,
+                "Too many incorrect password attempts. Please try again later."
+              )
+            );
+          return;
+        }
+
         if (req.headers.accept && req.headers.accept.includes("text/html")) {
           return res.redirect(
             `${FRONTEND_URL}/zaps/${shortId}?error=incorrect_password`
@@ -326,6 +349,8 @@ export const getZapByShortId = async (req: Request, res: Response) => {
         res.status(401).json(new ApiError(401, "Incorrect password."));
         return;
       }
+
+      clearZapPasswordAttemptCounter(req, shortId);
     }
     const updatedZap = await prisma.zap.update({
       where: { shortId },

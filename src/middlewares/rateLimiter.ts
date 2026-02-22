@@ -1,6 +1,60 @@
 import rateLimit from "express-rate-limit";
 import { Request, Response } from "express";
 
+type ZapPasswordAttemptRecord = {
+    count: number;
+    resetAt: number;
+};
+
+const zapPasswordAttemptStore = new Map<string, ZapPasswordAttemptRecord>();
+
+const toPositiveIntOrDefault = (value: string | undefined, fallback: number) => {
+    const parsed = parseInt(value || "", 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const getZapPasswordAttemptConfig = () => ({
+    windowMs: toPositiveIntOrDefault(
+        process.env.ZAP_PASSWORD_ATTEMPT_WINDOW_MS,
+        15 * 60 * 1000
+    ),
+    max: toPositiveIntOrDefault(process.env.ZAP_PASSWORD_ATTEMPT_MAX, 5),
+});
+
+const getZapPasswordAttemptKey = (req: Request, shortId: string) => {
+    return `${req.ip}:${shortId}`;
+};
+
+export const registerInvalidZapPasswordAttempt = (
+    req: Request,
+    shortId: string
+) => {
+    const now = Date.now();
+    const { windowMs, max } = getZapPasswordAttemptConfig();
+    const key = getZapPasswordAttemptKey(req, shortId);
+
+    let record = zapPasswordAttemptStore.get(key);
+
+    if (!record || record.resetAt <= now) {
+        record = { count: 0, resetAt: now + windowMs };
+    }
+
+    record.count += 1;
+    zapPasswordAttemptStore.set(key, record);
+
+    return {
+        isBlocked: record.count > max,
+        retryAfterSeconds: Math.max(1, Math.ceil((record.resetAt - now) / 1000)),
+        attempts: record.count,
+        max,
+    };
+};
+
+export const clearZapPasswordAttemptCounter = (req: Request, shortId: string) => {
+    const key = getZapPasswordAttemptKey(req, shortId);
+    zapPasswordAttemptStore.delete(key);
+};
+
 /**
  * Builds a consistent 429 Too Many Requests JSON response
  * using the same ApiError shape used throughout the project.
@@ -70,26 +124,4 @@ export const downloadLimiter = rateLimit({
     message:
         "Too many download requests from this IP. Please slow down and try again in a minute.",
     handler: tooManyRequestsHandler,
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Incorrect password limiter  (GET /api/zaps/:shortId?password=...)
-// Counts only incorrect password attempts for protected zaps.
-// Config: ZAP_PASSWORD_ATTEMPT_WINDOW_MS  (default: 15 min)
-//         ZAP_PASSWORD_ATTEMPT_MAX        (default: 5 attempts)
-// ─────────────────────────────────────────────────────────────────────────────
-export const zapPasswordAttemptLimiter = rateLimit({
-    windowMs:
-        parseInt(process.env.ZAP_PASSWORD_ATTEMPT_WINDOW_MS || "") ||
-        15 * 60 * 1000,
-    max: parseInt(process.env.ZAP_PASSWORD_ATTEMPT_MAX || "") || 5,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message:
-        "Too many incorrect password attempts from this IP. Please try again later.",
-    handler: tooManyRequestsHandler,
-    skipSuccessfulRequests: true,
-    requestWasSuccessful: (_req, res) => {
-        return !(res.locals && res.locals.invalidZapPassword === true);
-    },
 });
