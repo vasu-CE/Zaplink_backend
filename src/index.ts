@@ -4,6 +4,8 @@ import dotenv from "dotenv";
 import routes from "./Routes/index";
 import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
+import { globalLimiter } from "./middlewares/rateLimiter";
+import { initializeCronJobs } from "./utils/cron";
 
 dotenv.config();
 
@@ -48,4 +50,6 @@ app.use("/api", routes);
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
+  initializeCronJobs();
+  console.log("Cron jobs initialized.");
 });
