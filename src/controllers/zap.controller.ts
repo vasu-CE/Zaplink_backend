@@ -10,17 +10,23 @@ import {
 } from "../middlewares/rateLimiter";
 import { ApiError } from "../utils/ApiError";
 import { ApiResponse } from "../utils/ApiResponse";
+import { compressPDF } from "../utils/pdfCompressor";
+import { encryptText, decryptText } from "../utils/encryption";
 import dotenv from "dotenv";
 import mammoth from "mammoth";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { deleteFromCloudinary } from "../utils/cloudinaryHelper";
 dotenv.config();
 
-const nanoid = customAlphabet("1234567890abcdefghijklmnopqrstuvwxyz", 6);
+const nanoid = customAlphabet(
+  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+  8
+);
 
 const FRONTEND_URL =
-  process.env.FRONTEND_URL || "https://zaplink.krishnapaljadeja.com";
+  process.env.FRONTEND_URL || "http://localhost:5173";
 
 const generateTextHtml = (title: string, content: string) => {
   const escapedContent = content
@@ -110,7 +116,7 @@ const generateTextHtml = (title: string, content: string) => {
 </html>`;
 };
 const mapTypeToPrismaEnum = (
-  type: string
+  type: string,
 ):
   | "PDF"
   | "IMAGE"
@@ -154,7 +160,7 @@ const mapTypeToPrismaEnum = (
   return typeMap[type.toLowerCase()] || "UNIVERSAL";
 };
 
-export const createZap = async (req: Request, res: any) => {
+export const createZap = async (req: Request, res: any): Promise<any> => {
   try {
     const {
       type,
@@ -164,6 +170,7 @@ export const createZap = async (req: Request, res: any) => {
       password,
       viewLimit,
       expiresAt,
+      compress,
     } = req.body;
     const file = req.file;
 
@@ -173,8 +180,8 @@ export const createZap = async (req: Request, res: any) => {
         .json(
           new ApiError(
             400,
-            "Either a file, URL, or text content must be provided."
-          )
+            "Either a file, URL, or text content must be provided.",
+          ),
         );
     }
     const shortId = nanoid();
@@ -185,16 +192,62 @@ export const createZap = async (req: Request, res: any) => {
     let contentToStore: string | null = null;
 
     if (file) {
-      uploadedUrl = (file as any).path;
+      let filePath = (file as any).path;
+      const fileName = (file as any).originalname;
+      const fileExtension = path.extname(fileName).toLowerCase();
 
+      // Compress PDF if requested
+      const shouldCompress = compress === true || compress === "true" || compress === "1";
+      if (fileExtension === ".pdf" && shouldCompress) {
+        try {
+          const compressedPath = path.join(
+            path.dirname(filePath),
+            `${path.basename(filePath, ".pdf")}_compressed.pdf`
+          );
+          await compressPDF(filePath, compressedPath);
+          const compressedStats = await fs.promises.stat(compressedPath);
+          if (compressedStats.size > 0) {
+            filePath = compressedPath;
+            console.log(`PDF compressed successfully`);
+          }
+        } catch (err) {
+          console.error("Compression error, continuing with original:", err);
+        }
+      }
+
+      // Upload to Cloudinary
+      try {
+        let resource_type = "raw";
+        if (type === "image") {
+          resource_type = "image";
+        } else if (type === "video") {
+          resource_type = "video";
+        }
+
+        const uploadResult = await cloudinary.uploader.upload(filePath, {
+          folder: 'zaplink_folders',
+          resource_type: resource_type as "raw" | "image" | "video",
+        } as any);
+        
+        uploadedUrl = uploadResult.secure_url;
+        console.log('File uploaded to Cloudinary:', uploadedUrl);
+        
+        // Clean up local file after successful upload
+        try {
+          await fs.promises.unlink(filePath);
+        } catch (cleanupError) {
+          console.warn('Failed to cleanup local file:', cleanupError);
+        }
+      } catch (uploadError) {
+        console.error('Cloudinary upload failed:', uploadError);
+        // Fall back to local file path if upload fails
+        uploadedUrl = filePath;
+      }
+
+      // Extract text from documents BEFORE uploading to Cloudinary
       if (type === "document" || type === "presentation") {
         try {
-          const filePath = (file as any).path;
-          const fileName = (file as any).originalname;
-          const fileExtension = path.extname(fileName).toLowerCase();
-
           if (fileExtension === ".docx") {
-            // Extract text from DOCX
             const result = await mammoth.extractRawText({ path: filePath });
             const extractedText = result.value;
 
@@ -204,18 +257,22 @@ export const createZap = async (req: Request, res: any) => {
                 .json(
                   new ApiError(
                     400,
-                    "Extracted text is too long. Maximum 10,000 characters allowed."
-                  )
+                    "Extracted text is too long. Maximum 10,000 characters allowed.",
+                  ),
                 );
             }
 
-            contentToStore = `DOCX_CONTENT:${extractedText}`;
+            // Encrypt the extracted text before storing
+            const encryptedText = encryptText(extractedText);
+            contentToStore = `DOCX_CONTENT:${encryptedText}`;
           } else if (fileExtension === ".pptx") {
-            contentToStore = `PPTX_CONTENT:This is a PowerPoint presentation. The file has been uploaded and can be downloaded from the cloud storage.`;
+            const pptxMessage =
+              "This is a PowerPoint presentation. The file has been uploaded and can be downloaded from the cloud storage.";
+            const encryptedText = encryptText(pptxMessage);
+            contentToStore = `PPTX_CONTENT:${encryptedText}`;
           }
         } catch (error) {
           console.error("Error extracting text from file:", error);
-          // If text extraction fails, fall back to regular file handling
           contentToStore = null;
         }
       }
@@ -229,11 +286,13 @@ export const createZap = async (req: Request, res: any) => {
           .json(
             new ApiError(
               400,
-              "Text content is too long. Maximum 10,000 characters allowed."
-            )
+              "Text content is too long. Maximum 10,000 characters allowed.",
+            ),
           );
       }
-      contentToStore = `TEXT_CONTENT:${textContent}`;
+      // Encrypt text content before storing
+      const encryptedText = encryptText(textContent);
+      contentToStore = `TEXT_CONTENT:${encryptedText}`;
     }
 
     const zap = await prisma.zap.create({
@@ -249,8 +308,8 @@ export const createZap = async (req: Request, res: any) => {
         expiresAt: expiresAt ? new Date(expiresAt) : null,
       },
     });
-    const domain = process.env.BASE_URL || "https://api.krishnapaljadeja.com";
-    const shortUrl = `${domain}/api/zaps/${shortId}`;
+    const domain = process.env.FRONTEND_URL || "https://zaplink.krishnapaljadeja.com";
+    const shortUrl = `${domain}/zaps/${shortId}`;
 
     const qrCode = await QRCode.toDataURL(shortUrl);
 
@@ -264,8 +323,8 @@ export const createZap = async (req: Request, res: any) => {
           type,
           name,
         },
-        "Zap created successfully."
-      )
+        "Zap created successfully.",
+      ),
     );
   } catch (err) {
     console.error("CreateZap Error:", err);
@@ -273,7 +332,10 @@ export const createZap = async (req: Request, res: any) => {
   }
 };
 
-export const getZapByShortId = async (req: Request, res: Response) => {
+export const getZapByShortId = async (
+  req: Request,
+  res: Response,
+): Promise<any> => {
   try {
     const shortId: string = req.params.shortId as string;
 
@@ -283,11 +345,12 @@ export const getZapByShortId = async (req: Request, res: Response) => {
 
     const now = new Date();
     if (!zap) {
+      res.status(404).json(new ApiError(404, "Zap not found."));
+      return;
       if (req.headers.accept && req.headers.accept.includes("text/html")) {
         return res.redirect(`${FRONTEND_URL}/zaps/${shortId}?error=notfound`);
       }
-      res.status(404).json(new ApiError(404, "Zap not found."));
-      return;
+      return res.status(404).json(new ApiError(404, "Zap not found."));
     }
 
     if (zap.expiresAt) {
@@ -296,11 +359,23 @@ export const getZapByShortId = async (req: Request, res: Response) => {
 
       // Compare timestamps to avoid timezone issues
       if (currentTime.getTime() > expirationTime.getTime()) {
+        res.status(410).json(new ApiError(410, "This link has expired."));
+        return;
+        if (zap.cloudUrl) {
+          await deleteFromCloudinary(zap.cloudUrl);
+        }
+        await prisma.zap.delete({ where: { id: zap.id } });
         return res.redirect(`${FRONTEND_URL}/zaps/${shortId}?error=expired`);
       }
     }
 
     if (zap.viewLimit !== null && zap.viewCount >= zap.viewLimit) {
+      res.status(403).json(new ApiError(403, "View limit exceeded."));
+      return;
+      if (zap.cloudUrl) {
+        await deleteFromCloudinary(zap.cloudUrl);
+      }
+      await prisma.zap.delete({ where: { id: zap.id } });
       return res.redirect(`${FRONTEND_URL}/zaps/${shortId}?error=viewlimit`);
     }
 
@@ -308,64 +383,45 @@ export const getZapByShortId = async (req: Request, res: Response) => {
       const providedPassword = req.query.password as string;
 
       if (!providedPassword) {
+        res.status(401).json(new ApiError(401, "Password required."));
+        return;
         if (req.headers.accept && req.headers.accept.includes("text/html")) {
           return res.redirect(`${FRONTEND_URL}/zaps/${shortId}`);
         }
-        res.status(401).json(new ApiError(401, "Password required."));
-        return;
+        return res.status(401).json(new ApiError(401, "Password required."));
       }
 
       const isPasswordValid = await bcrypt.compare(
         providedPassword,
-        zap.passwordHash
+        zap.passwordHash,
       );
 
       if (!isPasswordValid) {
-        const attempt = registerInvalidZapPasswordAttempt(req, shortId);
-
-        if (attempt.isBlocked) {
-          res.set("Retry-After", String(attempt.retryAfterSeconds));
-          if (req.headers.accept && req.headers.accept.includes("text/html")) {
-            return res.redirect(
-              `${FRONTEND_URL}/zaps/${shortId}?error=too_many_attempts`
-            );
-          }
-          res
-            .status(429)
-            .json(
-              new ApiError(
-                429,
-                "Too many incorrect password attempts. Please try again later."
-              )
-            );
-          return;
-        }
-
-        if (req.headers.accept && req.headers.accept.includes("text/html")) {
-          return res.redirect(
-            `${FRONTEND_URL}/zaps/${shortId}?error=incorrect_password`
-          );
-        }
         res.status(401).json(new ApiError(401, "Incorrect password."));
         return;
+        if (req.headers.accept && req.headers.accept.includes("text/html")) {
+          return res.redirect(
+            `${FRONTEND_URL}/zaps/${shortId}?error=incorrect_password`,
+          );
+        }
+        return res.status(401).json(new ApiError(401, "Incorrect password."));
       }
 
       clearZapPasswordAttemptCounter(req, shortId);
     }
-    const updatedZap = await prisma.zap.update({
-      where: { shortId },
-      data: { viewCount: zap.viewCount + 1 },
-    });
 
-    if (
-      updatedZap.viewLimit !== null &&
-      updatedZap.viewCount > updatedZap.viewLimit
-    ) {
+    const updateResult = await prisma.$executeRaw`
+      UPDATE "Zap"
+      SET "viewCount" = "viewCount" + 1, "updatedAt" = NOW()
+      WHERE "shortId" = ${shortId}
+        AND ("viewLimit" IS NULL OR "viewCount" < "viewLimit")
+    `;
+
+    if (updateResult === 0) {
       if (req.headers.accept && req.headers.accept.includes("text/html")) {
         return res.redirect(`${FRONTEND_URL}/zaps/${shortId}?error=viewlimit`);
       }
-      res.status(410).json(new ApiError(410, "Zap view limit reached."));
-      return;
+      return res.status(410).json(new ApiError(410, "Zap view limit reached."));
     }
 
     if (zap.originalUrl) {
@@ -374,39 +430,74 @@ export const getZapByShortId = async (req: Request, res: Response) => {
         zap.originalUrl.startsWith("https://")
       ) {
         if (req.headers.accept && req.headers.accept.includes("text/html")) {
-          res.redirect(zap.originalUrl);
+          return res.redirect(zap.originalUrl);
         } else {
-          res.json({ url: zap.originalUrl, type: "redirect" });
+          return res.json({ url: zap.originalUrl, type: "redirect" });
         }
       } else if (zap.originalUrl.startsWith("TEXT_CONTENT:")) {
-        const textContent = zap.originalUrl.substring(13); 
+        const textContent = zap.originalUrl.substring(13);
+        try {
+          const encryptedContent = zap.originalUrl.substring(13);
+          // Decrypt text content before serving
+          const textContent = decryptText(encryptedContent);
 
-        if (req.headers.accept && req.headers.accept.includes("text/html")) {
-          const html = generateTextHtml(zap.name || "Untitled", textContent);
-          res.set("Content-Type", "text/html");
-          res.send(html);
-        } else {
-          res.json({ content: textContent, type: "text", name: zap.name });
+          if (req.headers.accept && req.headers.accept.includes("text/html")) {
+            const html = generateTextHtml(zap.name || "Untitled", textContent);
+            res.set("Content-Type", "text/html");
+            return res.send(html);
+          } else {
+            return res.json({
+              content: textContent,
+              type: "text",
+              name: zap.name,
+            });
+          }
+        } catch (decryptError) {
+          console.error("Failed to decrypt text content:", decryptError);
+          return res
+            .status(500)
+            .json(
+              new ApiError(
+                500,
+                "Failed to retrieve text content. Data may be corrupted.",
+              ),
+            );
         }
       } else if (
         zap.originalUrl.startsWith("DOCX_CONTENT:") ||
         zap.originalUrl.startsWith("PPTX_CONTENT:")
       ) {
-        const textContent = zap.originalUrl.substring(13); 
+        try {
+          const encryptedContent = zap.originalUrl.substring(13);
+          // Decrypt document content before serving
+          const textContent = decryptText(encryptedContent);
 
-        if (req.headers.accept && req.headers.accept.includes("text/html")) {
-    
-          const html = generateTextHtml(zap.name || "Untitled", textContent);
-          res.set("Content-Type", "text/html");
-          res.send(html);
-        } else {
-          res.json({ content: textContent, type: "document", name: zap.name });
+          if (req.headers.accept && req.headers.accept.includes("text/html")) {
+            const html = generateTextHtml(zap.name || "Untitled", textContent);
+            res.set("Content-Type", "text/html");
+            return res.send(html);
+          } else {
+            return res.json({
+              content: textContent,
+              type: "document",
+              name: zap.name,
+            });
+          }
+        } catch (decryptError) {
+          console.error("Failed to decrypt document content:", decryptError);
+          return res
+            .status(500)
+            .json(
+              new ApiError(
+                500,
+                "Failed to retrieve document content. Data may be corrupted.",
+              ),
+            );
         }
       } else {
- 
         const base64Data = zap.originalUrl;
         const matches = base64Data.match(
-          /^data:(image\/[a-zA-Z]+);base64,(.+)$/
+          /^data:(image\/[a-zA-Z]+);base64,(.+)$/,
         );
         if (matches) {
           const mimeType = matches[1];
@@ -415,62 +506,66 @@ export const getZapByShortId = async (req: Request, res: Response) => {
 
           if (req.headers.accept && req.headers.accept.includes("text/html")) {
             res.set("Content-Type", mimeType);
-            res.send(buffer);
+            return res.send(buffer);
           } else {
-            res.json({ data: base64Data, type: "image", name: zap.name });
+            return res.json({
+              data: base64Data,
+              type: "image",
+              name: zap.name,
+            });
           }
         } else {
-          res.status(400).json({ error: "Invalid base64 image data" });
+          return res.status(400).json({ error: "Invalid base64 image data" });
         }
       }
     } else if (zap.cloudUrl) {
       if (req.headers.accept && req.headers.accept.includes("text/html")) {
-        res.redirect(zap.cloudUrl);
+        return res.redirect(zap.cloudUrl);
       } else {
-        res.json({ url: zap.cloudUrl, type: "file" });
+        return res.json({ url: zap.cloudUrl, type: "file" });
       }
     } else {
-      res.status(500).json(new ApiError(500, "Zap content not found."));
+      return res.status(500).json(new ApiError(500, "Zap content not found."));
     }
   } catch (error) {
-    res.status(500).json(new ApiError(500, "Internal server error"));
+    return res.status(500).json(new ApiError(500, "Internal server error"));
   }
 };
 
-// export const shortenUrl = async (req: Request, res: Response) => {
-//   try {
-//     const { url, name } = req.body;
-//     if (!url || typeof url !== "string" || !/^https?:\/\//.test(url)) {
-//       return res
-//         .status(400)
-//         .json(new ApiError(400, "A valid URL is required."));
-//     }
-//     const shortId = nanoid();
-//     const zapId = nanoid();
-//     const zap = await prisma.zap.create({
-//       data: {
-//         type: "URL",
-//         name: name || "Shortened URL",
-//         cloudUrl: url,
-//         originalUrl: url,
-//         qrId: zapId,
-//         shortId,
-//       },
-//     });
-//     const domain = process.env.BASE_URL || "https://api.krishnapaljadeja.com";
-//     const shortUrl = `${domain}/api/zaps/${shortId}`;
-//     const qrCode = await QRCode.toDataURL(shortUrl);
-//     return res
-//       .status(201)
-//       .json(
-//         new ApiResponse(
-//           201,
-//           { zapId, shortUrl, qrCode, type: "URL", name: zap.name },
-//           "Short URL created successfully."
-//         )
-//       );
-//   } catch (err) {
-//     console.error("shortenUrl Error:", err);
-//     return res.status(500).json(new ApiError(500, "Internal server error"));
-//   }
-// };
+export const shortenUrl = async (req: Request, res: Response) => {
+  try {
+    const { url, name } = req.body;
+    if (!url || typeof url !== "string" || !/^https?:\/\//.test(url)) {
+      return res
+        .status(400)
+        .json(new ApiError(400, "A valid URL is required."));
+    }
+    const shortId = nanoid();
+    const zapId = nanoid();
+    const zap = await prisma.zap.create({
+      data: {
+        type: "URL",
+        name: name || "Shortened URL",
+        cloudUrl: url,
+        originalUrl: url,
+        qrId: zapId,
+        shortId,
+      },
+    });
+    const domain = process.env.FRONTEND_URL || "https://zaplink.krishnapaljadeja.com";
+    const shortUrl = `${domain}/zaps/${shortId}`;
+    const qrCode = await QRCode.toDataURL(shortUrl);
+    return res
+      .status(201)
+      .json(
+        new ApiResponse(
+          201,
+          { zapId, shortUrl, qrCode, type: "URL", name: zap.name },
+          "Short URL created successfully."
+        )
+      );
+  } catch (err) {
+    console.error("shortenUrl Error:", err);
+    return res.status(500).json(new ApiError(500, "Internal server error"));
+  }
+};

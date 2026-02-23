@@ -42,15 +42,15 @@ export class FileController {
         });
       }
 
-      if (zap.passwordHash) {
-        if (!providedPassword) {
+      if (file.password) {
+        if (!password) {
           res.status(401).json({ error: "Password required" });
           return;
         }
 
         const isPasswordValid = await bcrypt.compare(
-          providedPassword,
-          zap.passwordHash
+          password as string,
+          file.password
         );
 
         if (!isPasswordValid) {
