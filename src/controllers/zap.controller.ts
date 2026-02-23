@@ -4,6 +4,10 @@ import { customAlphabet } from "nanoid";
 import QRCode from "qrcode";
 import prisma from "../utils/prismClient";
 import cloudinary from "../middlewares/cloudinary";
+import {
+  clearZapPasswordAttemptCounter,
+  registerInvalidZapPasswordAttempt,
+} from "../middlewares/rateLimiter";
 import { ApiError } from "../utils/ApiError";
 import { ApiResponse } from "../utils/ApiResponse";
 import { compressPDF } from "../utils/pdfCompressor";
@@ -402,6 +406,8 @@ export const getZapByShortId = async (
         }
         return res.status(401).json(new ApiError(401, "Incorrect password."));
       }
+
+      clearZapPasswordAttemptCounter(req, shortId);
     }
 
     const updateResult = await prisma.$executeRaw`
