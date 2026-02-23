@@ -6,6 +6,10 @@ import {
   // shortenUrl,
 } from "../controllers/zap.controller";
 import rateLimit from "express-rate-limit";
+import {
+  uploadLimiter,
+  downloadLimiter,
+} from "../middlewares/rateLimiter";
 
 const notFoundLimiter = rateLimit({
     windowMs: 5 * 60 * 1000, // 5 minutes
@@ -26,8 +30,19 @@ const notFoundLimiter = rateLimit({
 
 const router = express.Router();
 
-router.post("/upload", upload.single("file"), createZap);
-// router.post("/shorten", (req, res) => shortenUrl(req, res));
-router.get("/:shortId", notFoundLimiter, getZapByShortId);
+/**
+ * POST /api/zaps/upload
+ * Rate limit: 10 requests / min per IP  (uploadLimiter)
+ * Also triggers QR code generation — compute-heavy, kept strict.
+ */
+router.post("/upload", uploadLimiter, upload.single("file"), createZap);
+
+/**
+ * GET /api/zaps/:shortId
+ * Rate limit: 30 requests / min per IP  (downloadLimiter)
+ * Prevents bulk scraping / automated mass-download of shared content.
+ */
+router.get("/:shortId", downloadLimiter, notFoundLimiter, getZapByShortId);
+
 
 export default router;
