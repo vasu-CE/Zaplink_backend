@@ -32,6 +32,8 @@ const notFoundLimiter = rateLimit({
 
 const router = express.Router();
 
+// Note: root POST removed to avoid duplicate endpoints; use /upload instead.
+
 /**
  * POST /api/zaps/upload
  * Rate limit: 10 requests / min per IP  (uploadLimiter)
