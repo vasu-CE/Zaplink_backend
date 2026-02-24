@@ -133,6 +133,27 @@ export const createZap = async (req: Request, res: Response) => {
       }
     }
 
+    // ── Input validation ──────────────────────────────────────────────────
+    const parsedViewLimit =
+      viewLimit !== undefined && viewLimit !== null && viewLimit !== ""
+        ? parseInt(viewLimit, 10)
+        : null;
+    if (parsedViewLimit !== null && (isNaN(parsedViewLimit) || parsedViewLimit < 1)) {
+      return res
+        .status(400)
+        .json(new ApiError(400, "viewLimit must be a positive integer."));
+    }
+
+    let parsedExpiresAt: Date | null = null;
+    if (expiresAt) {
+      parsedExpiresAt = new Date(expiresAt);
+      if (isNaN(parsedExpiresAt.getTime())) {
+        return res
+          .status(400)
+          .json(new ApiError(400, "expiresAt must be a valid date string."));
+      }
+    }
+
     const shortId = nanoid();
     const zapId = nanoid();
 
