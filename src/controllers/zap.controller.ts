@@ -6,6 +6,7 @@ import prisma from "../utils/prismClient";
 import cloudinary from "../middlewares/cloudinary";
 import { ApiError } from "../utils/ApiError";
 import { ApiResponse } from "../utils/ApiResponse";
+import { validatePasswordStrength } from "../utils/passwordValidator";
 import dotenv from "dotenv";
 import mammoth from "mammoth";
 import * as fs from "fs";
@@ -175,6 +176,17 @@ export const createZap = async (req: Request, res: any) => {
     }
     const shortId = nanoid();
     const zapId = nanoid();
+
+    // Validate password strength if provided
+    if (password) {
+      const validation = validatePasswordStrength(password);
+      if (!validation.isValid) {
+        return res.status(400).json(
+          new ApiError(400, "Password validation failed", validation.errors)
+        );
+      }
+    }
+
     const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
 
     let uploadedUrl: string | null = null;
@@ -353,7 +365,7 @@ export const getZapByShortId = async (req: Request, res: Response) => {
           res.json({ url: zap.originalUrl, type: "redirect" });
         }
       } else if (zap.originalUrl.startsWith("TEXT_CONTENT:")) {
-        const textContent = zap.originalUrl.substring(13); 
+        const textContent = zap.originalUrl.substring(13);
 
         if (req.headers.accept && req.headers.accept.includes("text/html")) {
           const html = generateTextHtml(zap.name || "Untitled", textContent);
@@ -366,10 +378,10 @@ export const getZapByShortId = async (req: Request, res: Response) => {
         zap.originalUrl.startsWith("DOCX_CONTENT:") ||
         zap.originalUrl.startsWith("PPTX_CONTENT:")
       ) {
-        const textContent = zap.originalUrl.substring(13); 
+        const textContent = zap.originalUrl.substring(13);
 
         if (req.headers.accept && req.headers.accept.includes("text/html")) {
-    
+
           const html = generateTextHtml(zap.name || "Untitled", textContent);
           res.set("Content-Type", "text/html");
           res.send(html);
@@ -377,7 +389,7 @@ export const getZapByShortId = async (req: Request, res: Response) => {
           res.json({ content: textContent, type: "document", name: zap.name });
         }
       } else {
- 
+
         const base64Data = zap.originalUrl;
         const matches = base64Data.match(
           /^data:(image\/[a-zA-Z]+);base64,(.+)$/
