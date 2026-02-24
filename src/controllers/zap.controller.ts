@@ -139,18 +139,20 @@ export const createZap = async (req: Request, res: Response) => {
         ? parseInt(viewLimit, 10)
         : null;
     if (parsedViewLimit !== null && (isNaN(parsedViewLimit) || parsedViewLimit < 1)) {
-      return res
+      res
         .status(400)
         .json(new ApiError(400, "viewLimit must be a positive integer."));
+      return;
     }
 
     let parsedExpiresAt: Date | null = null;
     if (expiresAt) {
       parsedExpiresAt = new Date(expiresAt);
       if (isNaN(parsedExpiresAt.getTime())) {
-        return res
+        res
           .status(400)
           .json(new ApiError(400, "expiresAt must be a valid date string."));
+        return;
       }
     }
 
@@ -253,6 +255,19 @@ export const createZap = async (req: Request, res: Response) => {
     return;
   }
 };
+
+export const destroyZap = async (shortIds: string[]) => {
+  try{
+    await prisma.zap.deleteMany({
+      where: {
+        shortId: { in: shortIds },
+      },
+    })
+  }catch (err){
+    console.error("DestroyZap Error:", err);
+    throw new Error("Failed to destroy Zap");
+  }
+}
 
 /* ======================== GET ZAP ======================== */
 export const getZapByShortId = async (req: Request, res: Response) => {

@@ -2,6 +2,8 @@ import multer from "multer";
 import { CloudinaryStorage } from "multer-storage-cloudinary";
 import cloudinary from "./cloudinary";
 import { customAlphabet } from "nanoid";
+import path from "path";
+import fs from "fs";
 
 // Opaque, cryptographically random ID — prevents URL enumeration & filename leaks
 const generateFileId = customAlphabet(
