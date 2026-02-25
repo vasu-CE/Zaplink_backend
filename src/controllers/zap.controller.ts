@@ -91,7 +91,14 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
       if (isNaN(parsedExpiresAt.getTime())) {
         res
           .status(400)
-          .json(new ApiError(400, "expiresAt must be a valid date string."));
+          .json(new ApiError(400, "Invalid expiresAt format."));
+        return;
+      }
+      // Ensure expiresAt is in the future
+      if (parsedExpiresAt.getTime() <= Date.now()) {
+        res
+          .status(400)
+          .json(new ApiError(400, "expiresAt must be a future timestamp."));
         return;
       }
     }

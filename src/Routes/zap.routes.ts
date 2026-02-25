@@ -83,7 +83,6 @@ const router = express.Router();
  *             schema:
  *               $ref: '#/components/schemas/ErrorResponse'
  */
-router.post("/upload", upload.single("file"), createZap);
 
 /**
  * @swagger
@@ -134,7 +133,6 @@ router.post("/upload", upload.single("file"), createZap);
  *       500:
  *         description: Server error
  */
-router.get("/:shortId", getZapByShortId);
  /* POST /api/zaps/upload
  * Rate limit: 10 requests / min per IP  (uploadLimiter)
  * Also triggers QR code generation — compute-heavy, kept strict.
