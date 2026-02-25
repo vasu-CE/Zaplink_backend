@@ -13,6 +13,7 @@ import dotenv from "dotenv";
 import mammoth from "mammoth";
 import { fileTypeFromBuffer } from "file-type"; // T066 Security
 import * as path from "path";
+import { validatePasswordStrength } from "../utils/passwordValidator";
 
 dotenv.config();
 

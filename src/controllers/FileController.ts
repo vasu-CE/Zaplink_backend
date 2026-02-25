@@ -2,6 +2,8 @@ import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import prisma from "../utils/prismClient";
 import dotenv from "dotenv";
+import { ApiError } from "../utils/ApiError";
+import { ApiResponse } from "../utils/ApiResponse";
 
 dotenv.config();
 export class FileController {
@@ -9,10 +11,6 @@ export class FileController {
     try {
       const { zapId } = req.params;
       const providedPassword = req.query.password as string | undefined;
-      
-      const zap = await prisma.zap.findUnique({
-        where: { shortId: zapId },
-      });
 
     // 1. Fetch the Zap record
     const zap = await prisma.zap.findUnique({
@@ -72,7 +70,7 @@ export class FileController {
     res.status(200).json(new ApiResponse(200, {
       name: zap.name,
       type: zap.type,
-      size: zap.size,
+      // size: zap.size,
       url: zap.cloudUrl || zap.originalUrl,
       expiresAt: zap.expiresAt,
       views: updatedZap.viewCount,
@@ -82,6 +80,7 @@ export class FileController {
   } catch (error) {
     console.error("Error getting file [T066]:", error);
     res.status(500).json(new ApiError(500, "Internal server error"));
+  }
   }
 };
 
