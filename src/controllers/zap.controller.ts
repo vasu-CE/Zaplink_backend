@@ -17,6 +17,7 @@ import dotenv from "dotenv";
 import mammoth from "mammoth";
 import { fileTypeFromBuffer } from "file-type"; // T066 Security
 import * as path from "path";
+import { validatePasswordStrength } from "../utils/passwordValidator";
 
 dotenv.config();
 
@@ -59,6 +60,47 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
     if (!file && !originalUrl && !textContent) {
       res.status(400).json(new ApiError(400, "Provide a file, URL, or text."));
       return;
+    }
+
+    /* 🔐 Password strength validation */
+    if (password) {
+      const result = validatePasswordStrength(password);
+      if (!result.isValid) {
+        res
+          .status(400)
+          .json(new ApiError(400, "Weak password", result.errors));
+        return;
+      }
+    }
+
+    // ── Input validation ──────────────────────────────────────────────────
+    const parsedViewLimit =
+      viewLimit !== undefined && viewLimit !== null && viewLimit !== ""
+        ? parseInt(viewLimit, 10)
+        : null;
+    if (parsedViewLimit !== null && (isNaN(parsedViewLimit) || parsedViewLimit < 1)) {
+      res
+        .status(400)
+        .json(new ApiError(400, "viewLimit must be a positive integer."));
+      return;
+    }
+
+    let parsedExpiresAt: Date | null = null;
+    if (expiresAt) {
+      parsedExpiresAt = new Date(expiresAt);
+      if (isNaN(parsedExpiresAt.getTime())) {
+        res
+          .status(400)
+          .json(new ApiError(400, "Invalid expiresAt format."));
+        return;
+      }
+      // Ensure expiresAt is in the future
+      if (parsedExpiresAt.getTime() <= Date.now()) {
+        res
+          .status(400)
+          .json(new ApiError(400, "expiresAt must be a future timestamp."));
+        return;
+      }
     }
 
     const shortId = nanoid();
