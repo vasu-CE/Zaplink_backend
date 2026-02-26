@@ -7,25 +7,55 @@ import cloudinary from "../middlewares/cloudinary";
 import { ApiError } from "../utils/ApiError";
 import { ApiResponse } from "../utils/ApiResponse";
 import { encryptText, decryptText } from "../utils/encryption";
-import { hasQuizProtection, verifyQuizAnswer, hashQuizAnswer } from "../utils/accessControl";
+import {
+  hasQuizProtection,
+  verifyQuizAnswer,
+  hashQuizAnswer,
+} from "../utils/accessControl";
 import { clearZapPasswordAttemptCounter } from "../middlewares/rateLimiter";
 import dotenv from "dotenv";
 import mammoth from "mammoth";
-import FileType from "file-type"; // T066 Security
-import * as path from "path";
+import { fileTypeFromBuffer } from "file-type"; // T066 Security
+import { validatePasswordStrength } from "../utils/passwordValidator";
 
 dotenv.config();
 
-const nanoid = customAlphabet("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", 8);
+const nanoid = customAlphabet(
+  "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+  8,
+);
+
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
 
 const mapTypeToPrismaEnum = (type: string): any => {
-  const typeMap: any = { pdf: "PDF", image: "IMAGE", video: "VIDEO", audio: "AUDIO", archive: "ZIP", url: "URL", text: "TEXT", document: "WORD", presentation: "PPT" };
+  const typeMap: any = {
+    pdf: "PDF",
+    image: "IMAGE",
+    video: "VIDEO",
+    audio: "AUDIO",
+    archive: "ZIP",
+    url: "URL",
+    text: "TEXT",
+    document: "WORD",
+    presentation: "PPT",
+  };
   return typeMap[type?.toLowerCase()] || "UNIVERSAL";
 };
 
 export const createZap = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { type, name, originalUrl, textContent, password, viewLimit, expiresAt, quizQuestion, quizAnswer, delayedAccessTime } = req.body;
+    const {
+      type,
+      name,
+      originalUrl,
+      textContent,
+      password,
+      viewLimit,
+      expiresAt,
+      quizQuestion,
+      quizAnswer,
+      delayedAccessTime,
+    } = req.body;
     const file = req.file;
 
     if (!file && !originalUrl && !textContent) {
@@ -33,10 +63,53 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    /* 🔐 Password strength validation */
+    if (password) {
+      const result = validatePasswordStrength(password);
+      if (!result.isValid) {
+        res
+          .status(400)
+          .json(new ApiError(400, "Weak password", result.errors));
+        return;
+      }
+    }
+
+    // ── Input validation ──────────────────────────────────────────────────
+    const parsedViewLimit =
+      viewLimit !== undefined && viewLimit !== null && viewLimit !== ""
+        ? parseInt(viewLimit, 10)
+        : null;
+    if (parsedViewLimit !== null && (isNaN(parsedViewLimit) || parsedViewLimit < 1)) {
+      res
+        .status(400)
+        .json(new ApiError(400, "viewLimit must be a positive integer."));
+      return;
+    }
+
+    let parsedExpiresAt: Date | null = null;
+    if (expiresAt) {
+      parsedExpiresAt = new Date(expiresAt);
+      if (isNaN(parsedExpiresAt.getTime())) {
+        res
+          .status(400)
+          .json(new ApiError(400, "Invalid expiresAt format."));
+        return;
+      }
+      // Ensure expiresAt is in the future
+      if (parsedExpiresAt.getTime() <= Date.now()) {
+        res
+          .status(400)
+          .json(new ApiError(400, "expiresAt must be a future timestamp."));
+        return;
+      }
+    }
+
     const shortId = nanoid();
     const zapId = nanoid();
+    const deletionToken = nanoid();
     const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
-    const hashedQuizAnswer = quizQuestion && quizAnswer ? await hashQuizAnswer(quizAnswer) : null;
+    const hashedQuizAnswer =
+      quizQuestion && quizAnswer ? await hashQuizAnswer(quizAnswer) : null;
 
     let unlockAt: Date | null = null;
     if (delayedAccessTime) {
@@ -48,20 +121,32 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
 
     if (file) {
       // --- TEAM T066: SECURITY VALIDATION ---
-      const detectedType = await FileType.fromBuffer(file.buffer);
-      const providedExt = file.originalname.split('.').pop()?.toLowerCase() || "";
+      const detectedType = await fileTypeFromBuffer(file.buffer);
+      const providedExt =
+        file.originalname.split(".").pop()?.toLowerCase() || "";
 
       if (!detectedType) {
-        res.status(415).json(new ApiError(415, "Unknown file signature. Upload blocked."));
+        res
+          .status(415)
+          .json(new ApiError(415, "Unknown file signature. Upload blocked."));
         return;
       }
 
       const actualExt = detectedType.ext as string;
       const claimExt = providedExt as string;
-      const isJpeg = (actualExt === 'jpg' || actualExt === 'jpeg') && (claimExt === 'jpg' || claimExt === 'jpeg');
-      
+      const isJpeg =
+        (actualExt === "jpg" || actualExt === "jpeg") &&
+        (claimExt === "jpg" || claimExt === "jpeg");
+
       if (actualExt !== claimExt && !isJpeg) {
-        res.status(400).json(new ApiError(400, `MIME Spoofing Detected! Content is ${actualExt}, claims ${providedExt}.`));
+        res
+          .status(400)
+          .json(
+            new ApiError(
+              400,
+              `MIME Spoofing Detected! Content is ${actualExt}, claims ${providedExt}.`,
+            ),
+          );
         return;
       }
 
@@ -69,7 +154,10 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
       const cloudinaryResponse: any = await new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
           { folder: "zaplink_folders", resource_type: "auto" },
-          (error, result) => { if (error) reject(error); else resolve(result); }
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          },
         );
         uploadStream.end(file.buffer);
       });
@@ -94,6 +182,7 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
         originalUrl: contentToStore,
         qrId: zapId,
         shortId,
+        deletionToken,
         passwordHash: hashedPassword,
         viewLimit: viewLimit ? parseInt(viewLimit) : null,
         expiresAt: expiresAt ? new Date(expiresAt) : null,
@@ -104,71 +193,48 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
     });
 
     const domain = process.env.BASE_URL || "http://localhost:5000";
-    res.status(201).json(new ApiResponse(201, { zapId, shortUrl: `${domain}/api/zaps/${shortId}` }, "Zap created."));
+    res
+      .status(201)
+      .json(
+        new ApiResponse(
+          201,
+          { zapId, shortUrl: `${domain}/api/zaps/${shortId}` },
+          "Zap created.",
+        ),
+      );
   } catch (err) {
     res.status(500).json(new ApiError(500, "Internal Server Error"));
   }
 };
 
-export const getZapByShortId = async (req: Request, res: Response): Promise<void> => {
-    try {
-        const { shortId } = req.params;
-        const { password, quizAnswer } = req.query;
-        const zap = await prisma.zap.findUnique({ where: { shortId } });
-
-        if (!zap) { res.status(404).json(new ApiError(404, "Zap not found.")); return; }
-        if (zap.unlockAt && new Date() < new Date(zap.unlockAt)) {
-            res.status(423).json(new ApiError(423, "File is currently locked.")); return;
-        }
-        if (hasQuizProtection(zap)) {
-            if (!quizAnswer || !(await verifyQuizAnswer(quizAnswer as string, zap.quizAnswerHash!))) {
-                res.status(401).json(new ApiError(401, "Incorrect quiz answer.")); return;
-            }
-        }
-        if (zap.passwordHash) {
-            if (!password || !(await bcrypt.compare(password as string, zap.passwordHash))) {
-                res.status(401).json(new ApiError(401, "Invalid password.")); return;
-            }
-            clearZapPasswordAttemptCounter(req, shortId);
-        }
-
-        await prisma.zap.update({ where: { shortId }, data: { viewCount: { increment: 1 } } });
-        res.json(new ApiResponse(200, zap, "Success"));
-    } catch (e) { res.status(500).json(new ApiError(500, "Error")); }
+const verifyZapPassword = async (
+  password: string,
+  hash: string,
+): Promise<boolean> => {
+  return await bcrypt.compare(password, hash);
 };
 
-export const getZapMetadata = async (req: Request, res: Response): Promise<void> => {
+export const destroyZap = async (shortIds: string[]) => {
   try {
-    const zap = await prisma.zap.findUnique({ where: { shortId: req.params.shortId } });
-    if (!zap) { res.status(404).json(new ApiError(404, "Not found")); return; }
-    res.json(new ApiResponse(200, { name: zap.name, quizQuestion: zap.quizQuestion, hasPassword: !!zap.passwordHash }, "Success"));
-  } catch (e) { res.status(500).json(new ApiError(500, "Error")); }
+    await prisma.zap.deleteMany({
+      where: {
+        shortId: { in: shortIds },
+      },
+    });
+  } catch (err) {
+    console.error("DestroyZap Error:", err);
+    throw new Error("Failed to destroy Zap");
+  }
 };
 
-/**
- * Verify quiz answer for a Zap
- * Returns a token if correct, which can be used in subsequent requests
- */
-export const verifyQuizForZap = async (
+export const getZapByShortId = async (
   req: Request,
   res: Response,
 ): Promise<void> => {
   try {
-    const shortId: string = req.params.shortId as string;
-    const { answer } = req.body;
-
-    if (!answer || typeof answer !== "string") {
-      res.status(400).json(new ApiError(400, "Answer is required."));
-      return;
-    }
-
-    const zap = await prisma.zap.findUnique({
-      where: { shortId },
-      select: {
-        quizQuestion: true,
-        quizAnswerHash: true,
-      },
-    });
+    const { shortId } = req.params;
+    const { password, quizAnswer } = req.query;
+    const zap = await prisma.zap.findUnique({ where: { shortId } });
 
     if (!zap) {
       res.status(404).json(new ApiError(404, "Zap not found."));
@@ -181,15 +247,35 @@ export const verifyQuizForZap = async (
         .json(new ApiError(400, "This Zap does not have quiz protection."));
       return;
     }
-
-    const isCorrect = await verifyQuizAnswer(answer, zap.quizAnswerHash);
-
-    if (!isCorrect) {
-      res
-        .status(401)
-        .json(new ApiError(401, "Incorrect answer. Please try again."));
+    if (zap.unlockAt && new Date() < new Date(zap.unlockAt)) {
+      res.status(423).json(new ApiError(423, "File is currently locked."));
       return;
     }
+    if (hasQuizProtection(zap)) {
+      if (
+        !quizAnswer ||
+        !(await verifyQuizAnswer(quizAnswer as string, zap.quizAnswerHash!))
+      ) {
+        res.status(401).json(new ApiError(401, "Incorrect quiz answer."));
+        return;
+      }
+    }
+    if (zap.passwordHash) {
+      if (
+        !password ||
+        !(await verifyZapPassword(password as string, zap.passwordHash))
+      ) {
+        res.status(401).json(new ApiError(401, "Invalid password."));
+        return;
+      }
+      clearZapPasswordAttemptCounter(req, shortId);
+    }
+
+    await prisma.zap.update({
+      where: { shortId },
+      data: { viewCount: { increment: 1 } },
+    });
+    res.json(new ApiResponse(200, zap, "Success"));
 
     // Return success with quiz verified flag
     res.status(200).json(
@@ -273,5 +359,58 @@ export const shortenUrl = async (req: Request, res: Response): Promise<void> => 
   } catch (error) {
     console.error("shortenUrl Error:", error);
     res.status(500).json(new ApiError(500, "Failed to shorten URL. Please try again."));
+  } 
+};
+
+export const getZapMetadata = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const zap = await prisma.zap.findUnique({
+      where: { shortId: req.params.shortId },
+    });
+    if (!zap) {
+      res.status(404).json(new ApiError(404, "Not found"));
+      return;
+    }
+    res.json(
+      new ApiResponse(
+        200,
+        {
+          name: zap.name,
+          quizQuestion: zap.quizQuestion,
+          hasPassword: !!zap.passwordHash,
+        },
+        "Success",
+      ),
+    );
+  } catch (e) {
+    res.status(500).json(new ApiError(500, "Error"));
+  }
+};
+
+export const verifyQuizForZap = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { shortId } = req.params;
+    const { answer } = req.body;
+    const zap = await prisma.zap.findUnique({ where: { shortId } });
+    if (!zap || !zap.quizAnswerHash) {
+      res.status(404).json(new ApiError(404, "No quiz"));
+      return;
+    }
+    const isCorrect = await verifyQuizAnswer(answer, zap.quizAnswerHash);
+    res.json(
+      new ApiResponse(
+        isCorrect ? 200 : 401,
+        { verified: isCorrect },
+        isCorrect ? "Correct" : "Incorrect",
+      ),
+    );
+  } catch (e) {
+    res.status(500).json(new ApiError(500, "Error"));
   }
 };
