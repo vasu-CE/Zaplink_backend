@@ -1,20 +1,56 @@
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
 import dotenv from "dotenv";
 import routes from "./Routes/index";
 import cookieParser from "cookie-parser";
+import cron from "node-cron";
+import {
+  deleteExpiredZaps,
+  deleteOverLimitZaps,
+} from "./utils/cleanup";
 import rateLimit from "express-rate-limit";
 import swaggerUi from "swagger-ui-express";
 import swaggerSpec from "./swagger";
+import { globalLimiter } from "./middlewares/rateLimiter";
+import multer from "multer";
+import { initializeCronJobs } from "./utils/cron";
 
 dotenv.config();
 
 const app = express();
 
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 app.set("trust proxy", 1);
 
+// ── Security Hardening ────────────────────────────────────────────────────────
+// Helmet sets sensible HTTP security headers (CSP, HSTS, X-Frame-Options, etc.)
+app.use(helmet());
+
+// CORS restricted to the configured frontend origin
+const FRONTEND_URL =
+  process.env.FRONTEND_URL || "https://zaplink.krishnapaljadeja.com";
+
+app.use(
+  cors({
+    origin: FRONTEND_URL,
+    credentials: true,
+  })
+);
 // Middleware
-app.use(cors());
+app.use(
+  cors({
+    origin: (process.env.CORS_ORIGIN || "http://localhost:5173")
+      .split(",")
+      .map((o) => o.trim()),
+    methods: "GET,POST,PUT,DELETE",
+    allowedHeaders: "Content-Type,Authorization",
+    credentials: true,
+  }),
+);
+
 app.use(express.json());
 app.use(cookieParser());
 
@@ -69,7 +105,16 @@ app.use(apiLimiter);
 // Use Routes
 app.use("/api", routes);
 
-// Start the server
+// ── Scheduled Cleanup Jobs ────────────────────────────────────────────────────
+// Runs every hour at minute 0 — sweeps expired and over-limit Zaps.
+cron.schedule("0 * * * *", async () => {
+  console.log("[Cron] Running scheduled Zap cleanup...");
+  await deleteExpiredZaps();
+  await deleteOverLimitZaps();
+  console.log("[Cron] Cleanup complete.");
+});
+
+// ── Start Server ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
