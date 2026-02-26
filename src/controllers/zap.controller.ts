@@ -15,6 +15,7 @@ import mammoth from "mammoth";
 import { fileTypeFromBuffer } from "file-type"; // T066 Security
 import * as path from "path";
 import UAParser from "ua-parser-js";
+import { maskIPAddress, aggregateAnalyticsData } from "../utils/ipMasking";
 
 dotenv.config();
 
@@ -106,7 +107,15 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
     });
 
     const domain = process.env.BASE_URL || "http://localhost:5000";
-    res.status(201).json(new ApiResponse(201, { zapId, shortUrl: `${domain}/api/zaps/${shortId}` }, "Zap created."));
+    
+    // Fetch the created zap to get the deletionToken
+    const createdZap = await prisma.zap.findUnique({ where: { shortId } });
+    
+    res.status(201).json(new ApiResponse(201, { 
+      zapId, 
+      shortUrl: `${domain}/api/zaps/${shortId}`,
+      deletionToken: createdZap?.deletionToken 
+    }, "Zap created."));
   } catch (err) {
     res.status(500).json(new ApiError(500, "Internal Server Error"));
   }
@@ -186,10 +195,27 @@ export const getZapByShortId = async (req: Request, res: Response): Promise<void
     export const getZapAnalytics = async (req: Request, res: Response): Promise<void> => {
       try {
         const { shortId } = req.params;
-        const zap = await prisma.zap.findUnique({ where: { shortId } });
-        if (!zap) { res.status(404).json(new ApiError(404, "Zap not found.")); return; }
+        const { token } = req.query;
+        
+        // Validate token parameter
+        if (!token || typeof token !== "string") {
+          res.status(401).json(new ApiError(401, "Analytics token required."));
+          return;
+        }
 
-        const [totalViews, uniqueIPs, analytics] = await Promise.all([
+        const zap = await prisma.zap.findUnique({ where: { shortId } });
+        if (!zap) { 
+          res.status(404).json(new ApiError(404, "Zap not found.")); 
+          return; 
+        }
+
+        // Verify deletion token
+        if (token !== zap.deletionToken) {
+          res.status(403).json(new ApiError(403, "Invalid analytics token."));
+          return;
+        }
+
+        const [totalViews, uniqueIPsData, rawAnalytics] = await Promise.all([
           prisma.zapAnalytics.count({ where: { zapId: zap.id } }),
           prisma.zapAnalytics.groupBy({
             by: ['ipAddress'],
@@ -199,18 +225,26 @@ export const getZapByShortId = async (req: Request, res: Response): Promise<void
             where: { zapId: zap.id },
             orderBy: { accessedAt: "desc" },
             select: {
-              ipAddress: true,
               device: true,
               browser: true,
               os: true,
+              referer: true,
               accessedAt: true,
             },
           }),
         ]);
 
-        const uniqueVisitors = uniqueIPs.length;
+        const uniqueVisitors = uniqueIPsData.length;
+        
+        // Aggregate and mask analytics data
+        const aggregatedAnalytics = aggregateAnalyticsData(rawAnalytics);
 
-        res.json(new ApiResponse(200, { totalViews, uniqueVisitors, analytics }, "Analytics fetched successfully"));
+        res.json(new ApiResponse(200, { 
+          totalViews, 
+          uniqueVisitors, 
+          aggregatedAnalytics,
+          lastUpdated: new Date().toISOString()
+        }, "Analytics fetched successfully"));
       } catch (e) { res.status(500).json(new ApiError(500, "Error")); }
     };
 

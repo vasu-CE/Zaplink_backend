@@ -34,7 +34,8 @@ export const getFile = async (req: Request, res: Response): Promise<void> => {
 
     // 3. Check View Limits
     if (zap.viewLimit !== null && zap.viewCount >= zap.viewLimit) {
-      return res.status(410).json(new ApiError(410, "View limit exceeded"));
+      res.status(410).json(new ApiError(410, "View limit exceeded"));
+      return;
     }
 
     // 4. Password Validation (Fixed Variable Names)
@@ -74,7 +75,7 @@ export const getFile = async (req: Request, res: Response): Promise<void> => {
     res.status(200).json(new ApiResponse(200, {
       name: zap.name,
       type: zap.type,
-      size: zap.size,
+      // size: zap.size,
       url: zap.cloudUrl || zap.originalUrl,
       expiresAt: zap.expiresAt,
       views: updatedZap.viewCount,
