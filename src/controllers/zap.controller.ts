@@ -167,7 +167,9 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
 
       // --- SECURE CLOUDINARY UPLOAD ---
       const cloudinaryResponse: any = await new Promise((resolve, reject) => {
-        const uniquePublicId = `zap_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
+        const uniquePublicId = `zap_${shortId}_${Date.now()}_${Math.random()
+          .toString(36)
+          .slice(2, 11)}`;
         const uploadStream = cloudinary.uploader.upload_stream(
           {
             folder: "zaplink_folders",

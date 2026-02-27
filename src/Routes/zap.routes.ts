@@ -195,6 +195,4 @@ router.get(
   getZapByShortId
 );
 
-// router.post("/shorten", (req, res) => shortenUrl(req, res));
-
 export default router;

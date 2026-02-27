@@ -37,7 +37,7 @@ export const sanitizeText = (input: string | null | undefined): string => {
     sanitized = sanitized.substring(0, 5000);
   }
 
-  // Strip tags and unsafe tag bodies
+  // Strip all tags and remove script/style/iframe contents
   sanitized = xss(sanitized, defaultXSSOptions);
 
   // Remove control characters (except newlines in text content)
