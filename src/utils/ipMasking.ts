@@ -37,6 +37,18 @@ export const aggregateAnalyticsData = (
     accessedAt: Date;
   }>
 ): AggregatedVisitorData => {
+  // Handle empty analytics data
+  if (rawAnalytics.length === 0) {
+    return {
+      date: new Date().toISOString().split("T")[0],
+      count: 0,
+      devices: {},
+      browsers: {},
+      operatingSystems: {},
+      topReferers: [],
+    };
+  }
+
   const dateMap = new Map<string, { count: number; devices: Map<string, number>; browsers: Map<string, number>; os: Map<string, number>; referers: Map<string | null, number> }>();
 
   rawAnalytics.forEach((record) => {
