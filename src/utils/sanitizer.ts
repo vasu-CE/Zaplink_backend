@@ -7,14 +7,14 @@ import xss from "xss";
 
 const defaultXSSOptions = {
   whiteList: {}, // No HTML tags allowed by default
-  stripIgnoredTag: true,
+  stripIgnoreTag: true,
   stripLeadingAndTrailingWhitespace: false,
 };
 
 const urlXSSOptions = {
   whiteList: {},
-  stripIgnoredTag: true,
-  onIgnoredTag: (_tag: string) => "", // Remove ignored tags
+  stripIgnoreTag: true,
+  onIgnoreTag: (_tag: string) => "", // Remove ignored tags
 };
 
 /**
@@ -35,6 +35,12 @@ export const sanitizeText = (input: string | null | undefined): string => {
   if (sanitized.length > 5000) {
     sanitized = sanitized.substring(0, 5000);
   }
+
+  // Remove dangerous tags and their content BEFORE xss processing
+  // This handles script, style, iframe, and other potentially dangerous tags
+  sanitized = sanitized.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
+  sanitized = sanitized.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "");
+  sanitized = sanitized.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "");
 
   // Remove XSS attempts
   sanitized = xss(sanitized, defaultXSSOptions);

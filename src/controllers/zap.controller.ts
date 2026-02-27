@@ -170,11 +170,12 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
 
       // --- SECURE CLOUDINARY UPLOAD ---
       const cloudinaryResponse: any = await new Promise((resolve, reject) => {
+        const uniquePublicId = `${sanitizedFileName}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         const uploadStream = cloudinary.uploader.upload_stream(
           {
             folder: "zaplink_folders",
             resource_type: "auto",
-            public_id: sanitizedFileName,
+            public_id: uniquePublicId,
           },
           (error, result) => {
             if (error) reject(error);
