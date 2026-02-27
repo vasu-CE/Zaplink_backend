@@ -5,6 +5,7 @@ import {
   getZapByShortId,
   getZapMetadata,
   verifyQuizForZap,
+  shortenUrl,
 } from "../controllers/zap.controller";
 import rateLimit from "express-rate-limit";
 import {
@@ -152,6 +153,8 @@ router.get("/:shortId/metadata", downloadLimiter, getZapMetadata);
  * Verify quiz answer
  */
 router.post("/:shortId/verify-quiz", downloadLimiter, verifyQuizForZap);
+
+router.post("/shorten" , downloadLimiter , shortenUrl);
 
 /**
  * GET /api/zaps/:shortId
