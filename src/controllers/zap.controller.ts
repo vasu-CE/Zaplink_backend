@@ -176,6 +176,7 @@ export const createZap = async (req: Request, res: any) => {
     }
     const shortId = nanoid();
     const zapId = nanoid();
+    const deletionToken = nanoid();
 
     // Validate password strength if provided
     if (password) {
@@ -271,6 +272,7 @@ export const createZap = async (req: Request, res: any) => {
           qrCode,
           type,
           name,
+          deletionToken,
         },
         "Zap created successfully."
       )
