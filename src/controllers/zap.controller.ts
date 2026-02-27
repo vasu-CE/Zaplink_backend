@@ -215,12 +215,19 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
     });
 
     const domain = process.env.BASE_URL || "http://localhost:5000";
-    
-    res.status(201).json(new ApiResponse(201, { 
-      zapId, 
-      shortUrl: `${domain}/api/zaps/${shortId}`,
-      deletionToken 
-    }, "Zap created."));
+    res
+      .status(201)
+      .json(
+        new ApiResponse(
+          201,
+          {
+            zapId,
+            shortUrl: `${domain}/api/zaps/${shortId}`,
+            deletionToken,
+          },
+          "Zap created.",
+        ),
+      );
   } catch (err) {
     console.error("createZap error:", err);
     res.status(500).json(new ApiError(500, "Internal Server Error"));

@@ -43,6 +43,7 @@ model Zap {
   deletionToken String?   @unique
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
   analytics     ZapAnalytics[]
 }
 
