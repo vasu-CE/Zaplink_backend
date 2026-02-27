@@ -19,7 +19,48 @@ jest.mock("bcrypt", () => ({
   },
 }));
 jest.mock("qrcode");
+jest.mock("../../middlewares/cloudinary", () => ({
+  __esModule: true,
+  default: {
+    uploader: {
+      upload_stream: jest.fn((options, callback) => {
+        // Simulate successful upload
+        setImmediate(() => {
+          callback(null, {
+            secure_url: "https://cloudinary.com/test-image.jpg",
+            public_id: "test-image-id",
+          });
+        });
+        // Return a mock stream with end method
+        return {
+          end: jest.fn(),
+        };
+      }),
+    },
+  },
+}));
+jest.mock("../../utils/encryption", () => ({
+  encryptText: jest.fn((text) => `encrypted_${text}`),
+  decryptText: jest.fn((text) => text.replace("encrypted_", "")),
+}));
+jest.mock("../../utils/accessControl", () => ({
+  hasQuizProtection: jest.fn(() => false),
+  verifyQuizAnswer: jest.fn(() => Promise.resolve(true)),
+  hashQuizAnswer: jest.fn((answer) => Promise.resolve(`hashed_${answer}`)),
+}));
+jest.mock("../../middlewares/rateLimiter", () => ({
+  clearZapPasswordAttemptCounter: jest.fn(),
+}));
+jest.mock("../../utils/passwordValidator", () => ({
+  __esModule: true,
+  validatePasswordStrength: jest.fn(() => ({ isValid: true, errors: [] })),
+}));
+jest.mock("../../services/analytics.service", () => ({
+  __esModule: true,
+  logAccess: jest.fn(),
+}));
 jest.mock("nanoid", () => ({
+  __esModule: true,
   customAlphabet: jest.fn(() => {
     let callCount = 0;
     return () => {
@@ -29,9 +70,14 @@ jest.mock("nanoid", () => ({
     };
   }),
 }));
+jest.mock("file-type", () => ({
+  __esModule: true,
+  fileTypeFromBuffer: jest.fn(),
+}));
 
 // Import after mocks
 import { createZap } from "../zap.controller";
+import { fileTypeFromBuffer } from "file-type";
 
 describe("createZap - Collision Detection Tests", () => {
   let mockRequest: Partial<Request>;
@@ -252,12 +298,16 @@ describe("createZap - Collision Detection Tests", () => {
       mockRequest.file = {
         path: "https://cloudinary.com/test-image.jpg",
         originalname: "test-image.jpg",
+        buffer: Buffer.from("fake-image-data"),
       } as any;
 
       mockRequest.body = {
         type: "image",
         name: "Test Image",
       };
+
+      // Mock file-type to return jpg for this test
+      (fileTypeFromBuffer as jest.Mock).mockResolvedValueOnce({ ext: "jpg", mime: "image/jpeg" });
 
       (prisma.zap.findUnique as jest.Mock).mockResolvedValue(null);
       (prisma.zap.create as jest.Mock).mockResolvedValue({

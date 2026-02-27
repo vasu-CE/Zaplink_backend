@@ -176,8 +176,29 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
     }
 
     // Generate unique IDs with collision detection and retry logic
-    const shortId = await generateUniqueId("shortId");
-    const zapId = await generateUniqueId("qrId");
+    let shortId: string;
+    let zapId: string;
+    
+    try {
+      shortId = await generateUniqueId("shortId");
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Service temporarily unavailable")) {
+        res.status(503).json(new ApiError(503, error.message));
+        return;
+      }
+      throw error;
+    }
+    
+    try {
+      zapId = await generateUniqueId("qrId");
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("Service temporarily unavailable")) {
+        res.status(503).json(new ApiError(503, error.message));
+        return;
+      }
+      throw error;
+    }
+    
     const deletionToken = nanoid();
     const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
     const hashedQuizAnswer =
@@ -280,6 +301,14 @@ export const createZap = async (req: Request, res: Response): Promise<void> => {
       );
   } catch (error) {
     console.error("Error in createZap:", error);
+    
+    // Handle Prisma unique constraint violations (P2002)
+    if (error instanceof Error && 'code' in error && error.code === 'P2002') {
+      return res.status(409).json(
+        new ApiError(409, "Resource with this ID already exists. Please try again.")
+      );
+    }
+    
     res.status(500).json(new ApiError(500, "Internal server error"));
   }
 };

@@ -12,6 +12,6 @@ module.exports = {
   coverageDirectory: 'coverage',
   verbose: true,
   clearMocks: true,
-  resetMocks: true,
+  resetMocks: false,  // Changed to false to preserve mock implementations
   restoreMocks: true,
 };
