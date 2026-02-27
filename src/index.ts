@@ -92,10 +92,6 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 }));
 
 
-app.get("/health", (req: any, res: any) => {
-  res.status(200).send("OK");
-});
-
 // Rate limiter for all routes except favicon and root
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
