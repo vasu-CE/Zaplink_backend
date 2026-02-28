@@ -18,6 +18,7 @@ import swaggerSpec from "./swagger";
 // ── Configuration ──────────────────────────────────────────────────────────────
 import { initEnvConfig } from "./config/env";
 import { setupMiddleware, setupHealthRoutes } from "./middlewares/config";
+import { errorHandler, notFoundHandler } from "./middlewares/errorHandler";
 import { requestLogger } from "./middlewares/logger";
 
 // ── Routes & Services ──────────────────────────────────────────────────────────
@@ -34,7 +35,8 @@ dotenv.config();
 
 /**
  * Initialize and validate environment config
- * Fails fast if required vars are missing
+ * For tests: gracefully handles validation errors
+ * For production: fails fast on validation errors
  */
 let config: ReturnType<typeof initEnvConfig>;
 try {
@@ -42,7 +44,11 @@ try {
   console.log(`[Config] Environment validated. NODE_ENV=${config.NODE_ENV}`);
 } catch (error: any) {
   console.error("[Config Error]", error.message);
-  process.exit(1);
+  // Only exit in non-test environments
+  // Tests can proceed with app export for importation
+  if (process.env.NODE_ENV !== "test") {
+    process.exit(1);
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -83,9 +89,19 @@ app.use("/api", globalLimiter);
 // Register all API routes
 app.use("/api", routes);
 
+// ── Error Handling & 404 Routes ──────────────────────────────────────────────
+// 404 handler (must be registered after all routes)
+app.use(notFoundHandler);
+
+// Global error handler (must be registered LAST)
+app.use(errorHandler);
+
 // ── Scheduled Cleanup Jobs ────────────────────────────────────────────────────
 // Runs every hour at minute 0 — sweeps expired and over-limit Zaps.
-const cleanupTask = cron.schedule("0 * * * *", async () => {
+// Skip in test environment
+let cleanupTask: any = null;
+if (process.env.NODE_ENV !== "test") {
+  cleanupTask = cron.schedule("0 * * * *", async () => {
   console.log("[Cron] Running scheduled Zap cleanup...");
   try {
     const expiredCount = await deleteExpiredZaps().then(() => "done");
@@ -94,7 +110,8 @@ const cleanupTask = cron.schedule("0 * * * *", async () => {
   } catch (error) {
     console.error("[Cron] Cleanup job failed:", error);
   }
-});
+  });
+}
 
 // ── Start Server ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
@@ -107,20 +124,23 @@ if (process.env.NODE_ENV !== "test") {
 
 // ── Cleanup Job ───────────────────────────────────────────────────────────────
 // Cleanup expired Zaps every hour (configurable via CLEANUP_INTERVAL_MS env var)
-const CLEANUP_INTERVAL_MS = parseInt(
-  process.env.CLEANUP_INTERVAL_MS || "3600000"
-); // Default: 1 hour
+// Skip in test environment
+let cleanupInterval: NodeJS.Timeout | null = null;
+if (process.env.NODE_ENV !== "test") {
+  const CLEANUP_INTERVAL_MS = parseInt(
+    process.env.CLEANUP_INTERVAL_MS || "3600000"
+  ); // Default: 1 hour
 
+  console.log(
+    `[Cleanup] Scheduled cleanup job every ${CLEANUP_INTERVAL_MS / 1000 / 60} minutes`
+  );
 
-console.log(
-  `[Cleanup] Scheduled cleanup job every ${CLEANUP_INTERVAL_MS / 1000 / 60} minutes`
-);
+  // Run cleanup immediately on startup
+  cleanupExpiredZaps();
 
-// Run cleanup immediately on startup
-cleanupExpiredZaps();
-
-// Schedule periodic cleanup
-const cleanupInterval = setInterval(cleanupExpiredZaps, CLEANUP_INTERVAL_MS);
+  // Schedule periodic cleanup
+  cleanupInterval = setInterval(cleanupExpiredZaps, CLEANUP_INTERVAL_MS);
+}
 
 export default app;
 
@@ -158,15 +178,19 @@ async function gracefulShutdown(signal: string) {
 
   // 3. Stop cron jobs
   try {
-    cleanupTask.stop();
-    console.log("[Shutdown] Cron jobs stopped.");
+    if (cleanupTask) {
+      cleanupTask.stop();
+      console.log("[Shutdown] Cron jobs stopped.");
+    }
   } catch (err) {
     console.error("[Shutdown] Error stopping cron jobs:", err);
   }
 
   // 4. Stop interval-based cleanup
-  clearInterval(cleanupInterval);
-  console.log("[Shutdown] Cleanup interval cleared.");
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    console.log("[Shutdown] Cleanup interval cleared.");
+  }
 
   // 5. Disconnect Prisma client
   try {

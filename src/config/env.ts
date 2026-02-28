@@ -39,10 +39,32 @@ interface EnvConfig {
 }
 
 /**
+ * Apply backward compatibility for legacy Cloudinary env var names
+ * Maps old names to new names if needed
+ */
+function applyCloudinaryBackwardCompat(): void {
+  // Support legacy env variable names
+  if (!process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_ACCOUNT) {
+    process.env.CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_ACCOUNT;
+  }
+  if (!process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_KEY) {
+    process.env.CLOUDINARY_API_KEY = process.env.CLOUDINARY_KEY;
+  }
+  if (!process.env.CLOUDINARY_API_SECRET && process.env.CLOUDINARY_SECRET) {
+    process.env.CLOUDINARY_API_SECRET = process.env.CLOUDINARY_SECRET;
+  }
+}
+
+/**
  * Parse and validate environment variables
- * Throws error if required vars are missing
+ * Throws error if required vars are missing (unless in test mode)
  */
 export function validateEnv(): EnvConfig {
+  // Apply backward compatibility first
+  applyCloudinaryBackwardCompat();
+
+  const isTestMode = process.env.NODE_ENV === "test";
+  
   const requiredVars = [
     "DATABASE_URL",
     "CLOUDINARY_CLOUD_NAME",
@@ -51,11 +73,19 @@ export function validateEnv(): EnvConfig {
   ];
 
   const missing = requiredVars.filter((v) => !process.env[v]);
+  
+  // In test mode, log warnings instead of failing; use defaults
   if (missing.length > 0) {
-    throw new Error(
-      `Missing required environment variables: ${missing.join(", ")}\n` +
-      "Please check your .env file."
-    );
+    if (isTestMode) {
+      console.warn(
+        `[Env] Warning: Missing env vars in test mode: ${missing.join(", ")}. Using defaults.`
+      );
+    } else {
+      throw new Error(
+        `Missing required environment variables: ${missing.join(", ")}\n` +
+        "Please check your .env file."
+      );
+    }
   }
 
   return {
@@ -65,10 +95,10 @@ export function validateEnv(): EnvConfig {
     CORS_ORIGIN: (process.env.CORS_ORIGIN || "http://localhost:5173")
       .split(",")
       .map((o) => o.trim()),
-    DATABASE_URL: process.env.DATABASE_URL!,
-    CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME!,
-    CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY!,
-    CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET!,
+    DATABASE_URL: process.env.DATABASE_URL || "postgresql://test:test@localhost:5432/zaplink_test",
+    CLOUDINARY_CLOUD_NAME: process.env.CLOUDINARY_CLOUD_NAME || (isTestMode ? "test-cloud" : ""),
+    CLOUDINARY_API_KEY: process.env.CLOUDINARY_API_KEY || (isTestMode ? "test-key" : ""),
+    CLOUDINARY_API_SECRET: process.env.CLOUDINARY_API_SECRET || (isTestMode ? "test-secret" : ""),
     RATE_LIMIT_WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000", 10),
     RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || "100", 10),
     UPLOAD_RATE_LIMIT_WINDOW_MS: parseInt(process.env.UPLOAD_RATE_LIMIT_WINDOW_MS || "60000", 10),
@@ -85,24 +115,50 @@ export function validateEnv(): EnvConfig {
 
 // Singleton instance - validated at startup
 let envConfig: EnvConfig | null = null;
+let isValidationAttempted = false;
 
 /**
  * Get validated environment config
- * Call getEnvConfig() after validateEnv() in main
+ * Returns cached config if available, otherwise attempts validation
  */
 export function getEnvConfig(): EnvConfig {
   if (!envConfig) {
-    throw new Error("Environment not validated yet. Call validateEnv() first.");
+    // Auto-initialize if not already done (useful for tests)
+    if (!isValidationAttempted) {
+      return initEnvConfig();
+    }
+    throw new Error("Environment not validated yet. Call validateEnv() or initEnvConfig() first.");
   }
   return envConfig;
 }
 
 /**
  * Initialize and cache validated config
+ * Safe to call multiple times; returns cached value after first call
  */
 export function initEnvConfig(): EnvConfig {
   if (!envConfig) {
-    envConfig = validateEnv();
+    isValidationAttempted = true;
+    try {
+      envConfig = validateEnv();
+    } catch (error) {
+      isValidationAttempted = true;
+      // In test mode, allow graceful degradation
+      if (process.env.NODE_ENV === "test") {
+        console.warn("[Env] Validation failed in test mode, using defaults");
+        envConfig = validateEnv();
+      } else {
+        throw error;
+      }
+    }
   }
   return envConfig;
+}
+
+/**
+ * Reset env config (useful for testing)
+ */
+export function resetEnvConfig(): void {
+  envConfig = null;
+  isValidationAttempted = false;
 }

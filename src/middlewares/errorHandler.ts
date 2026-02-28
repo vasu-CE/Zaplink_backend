@@ -24,7 +24,7 @@ export function errorHandler(
   req: Request,
   res: Response,
   next: NextFunction,
-): Response {
+): void {
   const isDev = process.env.NODE_ENV === "development";
   const isProduction = process.env.NODE_ENV === "production";
 
@@ -52,7 +52,7 @@ export function errorHandler(
   }
 
   // Return standardized error response
-  return res.status(statusCode).json({
+  res.status(statusCode).json({
     statusCode,
     message,
     success: false,
@@ -91,8 +91,9 @@ export function asyncHandler(
 export function notFoundHandler(
   req: Request,
   res: Response,
-): Response {
-  return res.status(404).json({
+  next: NextFunction,
+): void {
+  res.status(404).json({
     statusCode: 404,
     message: `Route not found: ${req.method} ${req.path}`,
     success: false,
