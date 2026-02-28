@@ -12,6 +12,8 @@
 import express from "express";
 import dotenv from "dotenv";
 import cron from "node-cron";
+import cors from "cors";
+import cookieParser from "cookie-parser";
 import swaggerUi from "swagger-ui-express";
 import swaggerSpec from "./swagger";
 
@@ -29,9 +31,6 @@ import {
   deleteOverLimitZaps,
 } from "./utils/cleanup";
 import rateLimit from "express-rate-limit";
-import swaggerUi from "swagger-ui-express";
-import swaggerSpec from "./swagger";
-import { globalLimiter } from "./middlewares/rateLimiter";
 import { cleanupExpiredZaps } from "./jobs/cleanupExpiredZaps";
 import multer from "multer";
 import { initializeCronJobs } from "./utils/cron";

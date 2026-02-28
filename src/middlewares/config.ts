@@ -53,11 +53,15 @@ export function setupMiddleware(app: Express): void {
  */
 export function setupHealthRoutes(app: Express): void {
   // No CORS/middleware on these - serve immediately
-  app.get("/favicon.ico", (req, res) => res.status(204).end());
+  app.get("/favicon.ico", (_req, res) => {
+    res.status(204).end();
+  });
   
-  app.get("/", (req, res) => res.status(200).send("ZapLink API Root"));
+  app.get("/", (_req, res) => {
+    res.status(200).send("ZapLink API Root");
+  });
   
-  app.get("/health", (req, res) => {
+  app.get("/health", (_req, res) => {
     res.status(200).json({
       status: "ok",
       timestamp: new Date().toISOString(),
