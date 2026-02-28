@@ -70,10 +70,7 @@ jest.mock("nanoid", () => ({
     };
   }),
 }));
-jest.mock("file-type", () => ({
-  __esModule: true,
-  fileTypeFromBuffer: jest.fn(),
-}));
+
 
 // Import after mocks
 import { createZap } from "../zap.controller";

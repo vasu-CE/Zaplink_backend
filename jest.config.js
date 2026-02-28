@@ -14,4 +14,7 @@ module.exports = {
   clearMocks: true,
   resetMocks: false,  // Changed to false to preserve mock implementations
   restoreMocks: true,
+  moduleNameMapper: {
+    '^file-type$': '<rootDir>/src/controllers/__tests__/__mocks__/file-type.ts',
+  },
 };
