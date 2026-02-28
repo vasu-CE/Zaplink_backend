@@ -44,7 +44,7 @@ export function setupMiddleware(app: Express): void {
   );
 
   // ── Preflight for complex requests ────────────────────────────────────────────
-  app.options("*", cors());
+  app.options("/*", cors());
 }
 
 /**
